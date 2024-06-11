@@ -279,7 +279,8 @@ class Crossnobis:
 
 
 class RSA:
-    def __init__(self, condition_labels, times, file: str = 'all_rdms.hdf5', delay_period_start=500, theoretical_models: dict = None):
+    def __init__(self, condition_labels, times, file: str = 'all_rdms.hdf5', delay_period_start=500,
+                 theoretical_models: dict = None,,subject_models: dict = None= ):
         """
         Class to perform and visualize RSA analyses
         Keyword arguments:
@@ -288,14 +289,16 @@ class RSA:
         file: file where RDMs are stored
         delay_period start: beginning of delay period (for averaging)
         theoretical models: dict of RDMs per model.
+        subject models: dict of RDMs per subject (give as {Name:[rdms]} where rdms is subs x rdm)
 
         """
         self.labels = condition_labels
         self.ridx, self.cidx = np.triu_indices(len(self.labels), k=1)
         self.theoretical_models = theoretical_models
+        self.subject_models = subject_models
 
         self.color_palette = {factor: sns.color_palette()[i] for i, factor in enumerate(
-            list(self.theoretical_models.keys())+['Intercept'])}
+            list(self.theoretical_models.keys()) + list(self.subject_models.keys()))}
 
         self.t = times
 
@@ -309,15 +312,35 @@ class RSA:
     # CALCULATE FITS
     ##################################
 
-    def fit_theoretical_models(self, models=None, ret_VIF=False):
+    def calculate_VIF(self,factor_df):
+        '''
+        helper function to calculate VIF
+        inputs: dataframe with unranked values
+        '''
+        ranked_vals = sista.rankdata(factor_df, axis=0)
+
+        desmat_with_intercept = pd.DataFrame(ranked_vals)
+        desmat_with_intercept['intercept'] = 1
+        vif_data = pd.DataFrame()
+        vif_data['regressor'] = desmat_with_intercept.columns.drop(
+            'intercept')
+        vif_data['VIF'] = [variance_inflation_factor(desmat_with_intercept.values, i)
+                            for i in range(len(desmat_with_intercept.columns))
+                            if desmat_with_intercept.columns[i] != 'intercept']
+        vif_data['regressor'] = factor_df.columns.tolist()
+
+        return vif_data
+
+    def fit_theoretical_models(self, models=None, ret_VIF=False,rank=True):
         '''
         Applies a linear regression fit of specified theoretical models
         Arguments:
         models: list of models (found in self.theoretical_models) to run
         ret_VIF: returns a list of VIFs per condition
+        rank: rank RDMs (empirical and theoretical) prior to running linear regression
         '''
         if models is None:  # if unset use all available options
-            models = self.theoretical_models.keys()
+            models = list(self.theoretical_models.keys())
 
         self.r2 = np.full((self.nsub, len(self.t)), np.nan)
 
@@ -326,26 +349,41 @@ class RSA:
         self.factor_df['Intercept'] = 1
 
         # rank factors by relative dissimilarity
-        ranked_vals = sista.rankdata(self.factor_df, axis=0)
 
         if ret_VIF:  # calculate and return VIFs
-            desmat_with_intercept = pd.DataFrame(ranked_vals)
-            desmat_with_intercept['intercept'] = 1
-            vif_data = pd.DataFrame()
-            vif_data['regressor'] = desmat_with_intercept.columns.drop(
-                'intercept')
-            vif_data['VIF'] = [variance_inflation_factor(desmat_with_intercept.values, i)
-                               for i in range(len(desmat_with_intercept.columns))
-                               if desmat_with_intercept.columns[i] != 'intercept']
-            self.vif_data = vif_data
-            vif_data['regressor'] = self.factor_df.columns.tolist()
+            vif_data = self.calculate_VIF(self.factor_df)
             print(vif_data)
         partial_r_df = pd.DataFrame()
 
         for isub in range(self.nsub):
-            ranked_dists = sista.rankdata(
-                self.rdms[isub, self.ridx, self.cidx, :], axis=0)
-            # Rank the RDMs across each time point by row
+
+            if self.subject_models is None:
+                factor_df =  pd.DataFrame(np.transpose(
+                    [self.theoretical_models[key][self.ridx, self.cidx] for key in models]), columns=models)  # convert to 1D dataframe
+            else:
+                skip=False
+                for model in self.subject_models.keys():
+                    if np.isnan(self.subject_models[model][isub]).any():
+                        warnings.warn(f'Subject {isub} has NaNs in {model} model. Skipping this subject',RuntimeWarning)
+                        skip=True
+                if skip:
+                    continue # skip this subject if we have NaNs in any of the RDMs
+                    
+                factor_df = pd.DataFrame(np.transpose(
+                    [self.theoretical_models[key][self.ridx, self.cidx] for key in models] +
+                    [self.subject_models[model][isub, self.ridx, self.cidx] for model in self.subject_models.keys()]),
+                    columns= models + list(self.subject_models.keys()))  # combination of RDMs and per subject models
+            factor_df['Intercept'] = 1
+
+            if rank:
+                # Rank the RDMs across each time point by row
+
+                ranked_vals = sista.rankdata(factor_df, axis=0)
+                ranked_dists = sista.rankdata(self.rdms[isub, self.ridx, self.cidx, :], axis=0)
+            else:
+                ranked_vals = factor_df.to_numpy()
+                ranked_dists = self.rdms[isub, self.ridx, self.cidx, :]
+
 
             r_scores = defaultdict(lambda: np.zeros((ranked_dists.shape[1])))
 
@@ -370,7 +408,7 @@ class RSA:
                 # Store the total correlation (sqrt of R-squared) for the full model
 
             r_df = pd.DataFrame(r_scores)
-            r_df.columns = self.factor_df.columns
+            r_df.columns = factor_df.columns
             r_df['sid'] = isub
             r_df['timepoint'] = self.t
 
@@ -469,8 +507,8 @@ class RSA:
             _,ax = plt.figure(facecolor='white', figsize=(8, 4))  # set up figure
 
         if fac_order is None:
-            fac_order = self.factor_df.columns.tolist()
-            fac_order.remove('Intercept')
+            fac_order = self.partial_r_df.factor.unique()
+            fac_order = fac_order[fac_order != 'Intercept']
 
         # default to beginning and end of delay period
         t_start = self.delay_period_start if t_start is None else t_start
