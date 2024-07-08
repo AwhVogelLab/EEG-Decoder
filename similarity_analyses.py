@@ -18,6 +18,7 @@ from sklearn.model_selection import StratifiedShuffleSplit
 from sklearn.preprocessing import LabelEncoder
 from statsmodels.stats.multitest import multipletests
 from statsmodels.stats.outliers_influence import variance_inflation_factor
+from __future__ import annotations
 warnings.filterwarnings('always', 'Warning',  ) # include runtime warnings
 from mne import set_log_level
 set_log_level('WARNING') # suppress text from parallel_func
@@ -280,7 +281,7 @@ class Crossnobis:
 
 class RSA:
     def __init__(self, condition_labels, times, file: str = 'all_rdms.hdf5', delay_period_start=500,
-                 theoretical_models: dict = None,,subject_models: dict = None= ):
+                 theoretical_models: dict = None,subject_models: dict = None):
         """
         Class to perform and visualize RSA analyses
         Keyword arguments:
@@ -297,8 +298,12 @@ class RSA:
         self.theoretical_models = theoretical_models
         self.subject_models = subject_models
 
-        self.color_palette = {factor: sns.color_palette()[i] for i, factor in enumerate(
-            list(self.theoretical_models.keys()) + list(self.subject_models.keys()))}
+        if self.subject_models is not None:
+
+            self.color_palette = {factor: sns.color_palette()[i] for i, factor in enumerate(
+                list(self.theoretical_models.keys()) + list(self.subject_models.keys()))}
+        else:
+            self.color_palette = {factor: sns.color_palette()[i] for i, factor in enumerate(self.theoretical_models.keys())}
 
         self.t = times
 
