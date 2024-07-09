@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import os
 import warnings
 from collections import defaultdict
@@ -18,7 +20,6 @@ from sklearn.model_selection import StratifiedShuffleSplit
 from sklearn.preprocessing import LabelEncoder
 from statsmodels.stats.multitest import multipletests
 from statsmodels.stats.outliers_influence import variance_inflation_factor
-from __future__ import annotations
 warnings.filterwarnings('always', 'Warning',  ) # include runtime warnings
 from mne import set_log_level
 set_log_level('WARNING') # suppress text from parallel_func
